@@ -29,6 +29,7 @@ in BIOS and UEFI modes. The process currently works with the following Debian se
 * Debian 12 (Bookworm)
 * Debian 13 (Trixie)
 * Proxmox VE 8 (Based on Bookworm) - Build tested on 24.04 with MAAS 3.5.4 only.
+* Proxmox VE 9 (Based on Trixie) - Build tested on 24.04 with MAAS 3.6.1 only.
 
 ## Supported Architectures
 
@@ -42,6 +43,7 @@ UEFI systems. However for Debian 12 (Bookworm) explicit images are required to
 support BIOS and UEFI modes. See BOOT make parameter for more details.
 * PVE8 does not come with network bridge preconfigured.
 * PVE8 with proxmox-kernel-6.11 is untested as of now.
+* PVE9 does not come with network bridge preconfigured.
 
 ## debian-cloudimg.pkr.hcl
 
@@ -88,6 +90,25 @@ packer build -var kernel=proxmox-kernel-6.11 -var customize_script=pve8.sh \
 #### pve8.sh customization script
 - adds no-subscription repository
 - adds proxmox pgp key
+- upgrades system
+- removes debian kernel and os-prober
+- installs proxmox-default-kernel proxmox-ve postfix open-iscsi chrony
+- comments out pve-enterprise repo (or apt will complain)
+- updates grub
+
+### Building the PVE9 image
+Use the pve9.sh script so it turns Trixie into PVE9 with 6.14 kernel.
+
+ovmf_suffix is defined here so building image works when using 24.04.
+```shell
+packer init .
+packer build -var kernel=proxmox-default-kernel -var customize_script=pve9.sh \
+    -var debian_series=trixie -var debian_version=13 -var ovmf_suffix=_4M .
+```
+#### pve9.sh customization script
+- adds no-subscription repository
+- adds proxmox pgp key
+- apt modernize-sources to migrate pre-existing repositories.
 - upgrades system
 - removes debian kernel and os-prober
 - installs proxmox-default-kernel proxmox-ve postfix open-iscsi chrony
