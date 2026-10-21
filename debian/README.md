@@ -17,7 +17,7 @@ The Packer templates in this directory creates Debian & PVE images for use with 
 
 * [MAAS](https://maas.io) 3.2+
 * [Curtin](https://launchpad.net/curtin) 21.0+
-* [A Custom Preseed for Debian and PVE8 (Important - See below)]
+* [A Custom Preseed for Debian and PVE (Important - See below)]
 
 ## Supported Debian & PVE Versions
 
@@ -28,8 +28,8 @@ in BIOS and UEFI modes. The process currently works with the following Debian se
 * Debian 11 (Bullseye)
 * Debian 12 (Bookworm)
 * Debian 13 (Trixie)
-* Proxmox VE 8 (Based on Bookworm) - Build tested on 24.04 with MAAS 3.5.4 only.
-* Proxmox VE 9 (Based on Trixie) - Build tested on 24.04 with MAAS 3.6.1 only.
+* Proxmox VE 9 (Based on Trixie) - Built on Ubuntu 22.04, deployed in UEFI mode with MAAS 3.7.4
+  (resolute ephemeral) on bare metal, with a MAAS defined `vmbr0` bridge.
 
 ## Supported Architectures
 
@@ -41,9 +41,8 @@ being the default for Debian. Proxmox VE is x86_64 only.
 * UEFI images from Debian 10 (Buster) and 11 (Bullseye) are usable on both BIOS and 
 UEFI systems. However for Debian 12 (Bookworm) explicit images are required to
 support BIOS and UEFI modes. See BOOT make parameter for more details.
-* PVE8 does not come with network bridge preconfigured.
-* PVE8 with proxmox-kernel-6.11 is untested as of now.
-* PVE9 does not come with network bridge preconfigured.
+* PVE images get their `vmbr0` bridge from MAAS: create it on the node before
+deploying, see [Deploying the PVE image](#deploying-the-pve-image).
 
 ## debian-cloudimg.pkr.hcl
 
@@ -72,87 +71,108 @@ Using make:
 make debian SERIES=bookworm
 ```
 
-### Building the PVE8 image
-Use the pve8.sh script so it turns Bookworm into PVE8 with 6.8 kernel.
+### Building the Proxmox VE 9 image
 
-ovmf_suffix is defined here so building image works when using 24.04.
+`pve.sh` turns the Debian 13 (Trixie) cloud image into Proxmox VE 9. Using make:
+
+```shell
+make pve    # pve9-custom-cloudimg.tar.gz
+```
+
+Or directly with packer (add `-var ovmf_suffix=_4M` on Ubuntu 24.04+):
+
 ```shell
 packer init .
-packer build -var kernel=proxmox-default-kernel -var customize_script=pve8.sh \
-    -var debian_series=bookworm -var debian_version=12 -var ovmf_suffix=_4M .
+packer build -var customize_script=pve.sh -var kernel=proxmox-default-kernel \
+    -var debian_series=trixie -var debian_version=13 -var disk_size=8G \
+    -var filename=pve9-custom-cloudimg.tar.gz .
 ```
-Use the opt-in 6.11 kernel instead (untested but should work)
-```shell
-packer init .
-packer build -var kernel=proxmox-kernel-6.11 -var customize_script=pve8.sh \
-    -var debian_series=bookworm -var debian_version=12 -var ovmf_suffix=_4M .
-```
-#### pve8.sh customization script
-- adds no-subscription repository
-- adds proxmox pgp key
-- upgrades system
-- removes debian kernel and os-prober
-- installs proxmox-default-kernel proxmox-ve postfix open-iscsi chrony
-- comments out pve-enterprise repo (or apt will complain)
-- updates grub
 
-### Building the PVE9 image
-Use the pve9.sh script so it turns Trixie into PVE9 with 6.14 kernel.
+`pve.sh` follows the official "Install Proxmox VE on Debian" procedure and:
 
-ovmf_suffix is defined here so building image works when using 24.04.
-```shell
-packer init .
-packer build -var kernel=proxmox-default-kernel -var customize_script=pve9.sh \
-    -var debian_series=trixie -var debian_version=13 -var ovmf_suffix=_4M .
-```
-#### pve9.sh customization script
-- adds no-subscription repository
-- adds proxmox pgp key
-- apt modernize-sources to migrate pre-existing repositories.
-- upgrades system
-- removes debian kernel and os-prober
-- installs proxmox-default-kernel proxmox-ve postfix open-iscsi chrony
-- comments out pve-enterprise repo (or apt will complain)
-- updates grub
+- adds the `pve-no-subscription` repository and the Proxmox archive key,
+- installs `proxmox-default-kernel proxmox-ve postfix open-iscsi chrony ifupdown2`
+  (postfix as "Local only"),
+- purges the Debian kernels and os-prober,
+- disables the enterprise repositories,
+- lets root log in over SSH with the MAAS user's keys (no password),
+- leaves ifupdown2 as the only network stack (disables systemd-networkd and
+  systemd-resolved, removes the build VM's netplan config),
+- makes cloud-init render the MAAS network configuration for ifupdown2 and
+  stop managing `/etc/hosts`,
+- installs the `pve-maas-interfaces` and `pve-maas-network` first boot
+  services, see below,
+- wipes the cluster database generated during the build, so that every
+  deployed node gets its own root CA, certificates and authkey.
+
+#### First boot services
+
+Both run once, on the first boot after deployment.
+
+`pve-maas-interfaces` runs after cloud-init wrote the MAAS network
+configuration and before networking starts. cloud-init can only write it to
+`/etc/network/interfaces.d/50-cloud-init`, which Proxmox VE neither sources nor
+shows in its GUI, so the service moves it into `/etc/network/interfaces` and
+disables cloud-init's network configuration: from then on the network belongs
+to PVE.
+
+`pve-cluster` only starts if the hostname resolves to a non-loopback address,
+and Proxmox VE expects a static `/etc/resolv.conf`. Since the node's final
+address is only known once the MAAS network configuration is applied,
+`pve-maas-network` runs after the network is up and before `pve-cluster`, and:
+
+- writes `/etc/resolv.conf` from the `dns-nameservers`/`dns-search` MAAS put
+  in `/etc/network/interfaces`,
+- maps the hostname (and FQDN, from the first search domain) to the address of
+  the default route (IPv4, then IPv6, then the first global address),
+- updates postfix's hostname accordingly.
+
+Both are implemented by `/usr/local/sbin/pve-maas-network`, their logs are
+available with `journalctl -u pve-maas-interfaces -u pve-maas-network`.
 
 #### Uploading the PVE image
+
 ```shell
-sudo maas ${LOGIN} boot-resources create name='custom/pve8' title='PVE8' \
-architecture='amd64/generic' filetype='tgz' content@=debian-custom-cloudimg.tar.gz -k
+maas ${LOGIN} boot-resources create name='custom/pve9' title='Proxmox VE 9' \
+    architecture='amd64/generic' base_image='ubuntu/resolute' filetype='tgz' \
+    content@=pve9-custom-cloudimg.tar.gz
 ```
 
-#### curtin_userdata file naming
-In order to get PVE properly configured when deploying, one must have a properly
-named `curtin_userdata_` file for PVE.
+`base_image` must be an OS MAAS knows: use the Ubuntu series of your
+commissioning/ephemeral image. MAAS checks the deployment kernel against it,
+so a base older than `default_min_hwe_kernel` makes the deployment fail with
+`<series> has no kernels available which meet min_hwe_kernel(...)`. It does not
+change what is installed.
 
-file naming is:
-- custom due to `name='custom…'`
-- amd64 due to `architecture='amd64'`
-- generic due to `architecture='…/generic'`
-- pve8 due to `name='…/pve8'`
-So be **sure** to have a file named
-`/var/snap/maas/current/preseeds/curtin_userdata_custom_amd64_generic_pve8` if
-using MAAS Snap and using the same `boot-resources create` command as above, adapt
-otherwise.
+#### curtin_userdata for PVE
 
-this does one particular important thing under the hood:
-- Link the ipv4 and hostname given by MAAS in /etc/hosts so services start properly. That’s not
-perfect and will *very* likely break if you have several links UP, defined bonds, are ipv6 only… (late_8)
-Any enhancement on that point is welcome.
+MAAS picks the preseed matching the boot resource,
+`curtin_userdata_<os>_<arch>_<subarch>_<release>`, so with the command above
+(`custom`, `amd64/generic`, `pve9`) copy the provided
+`curtin_userdata_custom_amd64_generic_pve9` to
+`/var/snap/maas/current/preseeds/` (snap) or `/etc/maas/preseeds/` (deb).
+Adapt the file name if you use another boot resource name.
 
-#### Deploying PVE8 image
-You’ll need to check Cloud-init user-data and use the following script:
-```yaml
-#cloud-config
-chpasswd:
-  list: |
-     root:CHANGE_ME
-     cloud-user:CHANGE_ME
-  expire: False
-manage_etc_hosts: False
+#### Deploying the PVE image
+
+Proxmox VE guests need a bridge. Rather than converting the network after
+deployment, let MAAS configure it: on the machine's *Network* tab create a
+bridge named `vmbr0` on the interface to use, with the subnet and IP mode you
+want, then deploy. With the CLI:
+
+```shell
+maas ${LOGIN} interfaces create-bridge ${SYSTEM_ID} name=vmbr0 parent=${IFACE_ID}
+maas ${LOGIN} interface link-subnet ${SYSTEM_ID} vmbr0 subnet=${SUBNET} mode=auto
 ```
-Once that done you should have a properly running PVE8 machine, and be able to
-log in with root account on https://MAAS_provided_IP:8006
+
+No user-data is needed: the image lets `root` log in over SSH with the SSH keys
+of the MAAS user deploying the machine (SSH password authentication is
+disabled). Root has no password, set one to use the web interface (PAM
+realm), which is then available at `https://<node IP>:8006`:
+
+```shell
+ssh root@<node IP> passwd
+```
 
 #### Accessing external files from your script
 

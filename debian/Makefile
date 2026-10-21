@@ -43,7 +43,7 @@ else
 	OVMF_SFX ?=
 endif
 
-.PHONY: all clean
+.PHONY: all clean debian pve
 
 all: debian
 
@@ -84,8 +84,24 @@ debian: check-deps clean OVMF_CODE.fd OVMF_VARS.fd SIZE_CODE.fd SIZE_VARS.fd
 		-var host_is_arm=${HOST_IS_ARM} \
 		-var timeout=${TIMEOUT} .
 
+# Proxmox VE 9, built from trixie. amd64 only.
+pve: ARCH = amd64
+pve: check-deps clean OVMF_CODE.fd OVMF_VARS.fd
+	${PACKER} init . && ${PACKER} build \
+		-var debian_series=trixie \
+		-var debian_version=13 \
+		-var architecture=amd64 \
+		-var ovmf_suffix=${OVMF_SFX} \
+		-var boot_mode=${BOOT} \
+		-var host_is_arm=${HOST_IS_ARM} \
+		-var customize_script=pve.sh \
+		-var kernel=proxmox-default-kernel \
+		-var disk_size=8G \
+		-var filename=pve9-custom-cloudimg.tar.gz \
+		-var timeout=${TIMEOUT} .
+
 clean:
-	${RM} -rf output-* debian-custom-*.gz \
+	${RM} -rf output-* debian-custom-*.gz pve*-custom-*.gz \
 		seeds-cloudimg.iso \
 		OVMF_VARS.fd \
 		OVMF_CODE.fd
