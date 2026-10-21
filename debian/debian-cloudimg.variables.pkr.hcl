@@ -45,3 +45,9 @@ variable "ovmf_suffix" {
   default     = ""
   description = "Suffix for OVMF CODE and VARS files. Newer systems such as Noble use _4M."
 }
+
+variable "disk_size" {
+  type        = string
+  default     = "4G"
+  description = "Size of the build VM disk. Proxmox VE needs more room than plain Debian."
+}
