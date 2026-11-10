@@ -6,6 +6,10 @@ kernel:
 apt:
   preserve_sources_list: true
 
+# Upgrade the image (kernel included) to the latest packages at deployment.
+system_upgrade:
+  enabled: true
+
 debconf_selections:
  maas: |
   {{for line in str(curtin_preseed).splitlines()}}

@@ -154,6 +154,11 @@ MAAS picks the preseed matching the boot resource,
 `/var/snap/maas/current/preseeds/` (snap) or `/etc/maas/preseeds/` (deb).
 Adapt the file name if you use another boot resource name.
 
+This preseed enables curtin's `system_upgrade`: at deployment the installed
+system, Proxmox kernel included, is upgraded to the latest packages from the
+Debian and Proxmox repositories, so the node must reach them (directly or
+through the MAAS proxy). Remove it to deploy the image as built.
+
 #### Deploying the PVE image
 
 Proxmox VE guests need a bridge. Rather than converting the network after
