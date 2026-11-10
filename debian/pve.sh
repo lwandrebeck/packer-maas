@@ -41,6 +41,13 @@ apt-get install -y proxmox-ve postfix open-iscsi chrony ifupdown2
 DEBIAN_KERNELS=$(dpkg-query -W -f='${binary:Package} ${db:Status-Status}\n' 'linux-image-*' |
     awk '$2 == "installed" && $1 !~ /-pve/ { print $1 }')
 apt-get purge -y ${DEBIAN_KERNELS} os-prober
+
+# grub-cloud-amd64 installs GRUB for both BIOS and UEFI each time it is
+# configured, which fails on a MAAS UEFI deployment (GPT, no BIOS boot
+# partition) at the first upgrade. UEFI images only need grub-efi-amd64.
+if dpkg-query -W -f='${db:Status-Status}' grub-efi-amd64 2>/dev/null | grep -qx installed; then
+    apt-get purge -y grub-cloud-amd64
+fi
 apt-get autoremove -y --purge
 
 # Disable the enterprise repositories, they need a subscription.
@@ -95,6 +102,8 @@ interfaces() {
         # Drop comments and the "dns {...}" python dict some cloud-init
         # versions emit next to the dns-* options.
         grep -v -e '^#' -e '^[[:space:]]*dns {' "$ci" | sed 's/^\([[:space:]]*\)bridge_/\1bridge-/'
+        # Like a stock PVE install: SDN writes /etc/network/interfaces.d/sdn.
+        printf '\nsource /etc/network/interfaces.d/*\n'
     } > /etc/network/interfaces
     rm -f "$ci"
     printf 'network:\n  config: disabled\n' > /etc/cloud/cloud.cfg.d/99-pve-network.cfg

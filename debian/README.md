@@ -111,10 +111,11 @@ Both run once, on the first boot after deployment.
 
 `pve-maas-interfaces` runs after cloud-init wrote the MAAS network
 configuration and before networking starts. cloud-init can only write it to
-`/etc/network/interfaces.d/50-cloud-init`, which Proxmox VE neither sources nor
-shows in its GUI, so the service moves it into `/etc/network/interfaces` and
-disables cloud-init's network configuration: from then on the network belongs
-to PVE.
+`/etc/network/interfaces.d/50-cloud-init`, which Proxmox VE doesn't show in its
+GUI, so the service moves it into `/etc/network/interfaces` (ending with
+`source /etc/network/interfaces.d/*` like a stock PVE install, which SDN needs)
+and disables cloud-init's network configuration: from then on the network
+belongs to PVE.
 
 `pve-cluster` only starts if the hostname resolves to a non-loopback address,
 and Proxmox VE expects a static `/etc/resolv.conf`. Since the node's final
